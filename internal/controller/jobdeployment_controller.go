@@ -18,13 +18,16 @@ package controller
 
 import (
 	"context"
+	"github.com/google/go-cmp/cmp"
+	apiv1alpha1 "github.com/sgatewood/job-deployment/api/v1alpha1"
+	batchv1 "k8s.io/api/batch/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
+	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/log"
-
-	apiv1alpha1 "github.com/sgatewood/job-deployment/api/v1alpha1"
-	batchv1 "k8s.io/api/batch/v1"
+	"time"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 )
 
@@ -53,32 +56,56 @@ type JobDeploymentReconciler struct {
 func (r *JobDeploymentReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	l := log.FromContext(ctx)
 
-	jobDeployment := &apiv1alpha1.JobDeployment{}
-	if err := r.Get(ctx, req.NamespacedName, jobDeployment); err != nil {
-		l.Error(err, "could not get jobDeployment")
-		return ctrl.Result{}, client.IgnoreNotFound(err)
+	parent := &apiv1alpha1.JobDeployment{}
+	if err := r.Get(ctx, req.NamespacedName, parent); err != nil {
+		if apierrors.IsNotFound(err) {
+			l.Info("parent doesn't exist -- nothing to do")
+			return ctrl.Result{}, nil
+		} else {
+			l.Error(err, "could not get parent")
+			return ctrl.Result{}, err
+		}
 	}
+	l = l.WithValues("name", req.Name, "namespace", req.Namespace)
 
-	l = l.WithValues("name", jobDeployment.Name, "namespace", jobDeployment.Namespace)
-
-	job := &batchv1.Job{}
-	err := r.Get(ctx, req.NamespacedName, job)
-
+	child := &batchv1.Job{}
+	err := r.Get(ctx, req.NamespacedName, child)
 	if client.IgnoreNotFound(err) != nil {
+		l.Error(err, "could not get child")
 		return ctrl.Result{}, err
 	}
 
-	if apierrors.IsNotFound(err) {
-		l.Info("creating child job")
-		job.Name = jobDeployment.Name
-		job.Namespace = jobDeployment.Namespace
-		job.Spec = jobDeployment.Spec.JobSpec
-		if err := r.Create(ctx, job); err != nil {
+	if err != nil && apierrors.IsNotFound(err) {
+		l.Info("creating child")
+		child.Name = parent.Name
+		child.Namespace = parent.Namespace
+		child.Spec = parent.Spec.JobSpec
+		if err := controllerutil.SetOwnerReference(parent, child, r.Scheme); err != nil {
+			l.Error(err, "could not set owner refs")
 			return ctrl.Result{}, err
 		}
-		l.Info("created child job")
+		if err := r.Create(ctx, child); err != nil {
+			l.Error(err, "could not create child")
+			return ctrl.Result{}, err
+		}
+		l.Info("created child")
+		return ctrl.Result{}, nil
+	}
+
+	if diff := cmp.Diff(parent.Spec.JobSpec, child.Spec); diff != "" {
+		l.Info("child spec differs -- deleting child")
+		if child.GetDeletionTimestamp() != nil {
+			l.Info("still deleting child")
+			return ctrl.Result{RequeueAfter: 1 * time.Second}, nil
+		}
+		deletePolicy := metav1.DeletePropagationForeground
+		if err := r.Delete(ctx, child, &client.DeleteOptions{PropagationPolicy: &deletePolicy}); err != nil {
+			l.Error(err, "could not delete child")
+			return ctrl.Result{Requeue: true}, err
+		}
+		return ctrl.Result{RequeueAfter: 1 * time.Second}, nil
 	} else {
-		l.Info("child job exists")
+		l.Info("child is up to date")
 	}
 
 	return ctrl.Result{}, nil
