@@ -65,10 +65,6 @@ type JobDeploymentReconciler struct {
 
 // Reconcile is part of the main kubernetes reconciliation loop which aims to
 // move the current state of the cluster closer to the desired state.
-// TODO(user): Modify the Reconcile function to compare the state specified by
-// the JobDeployment object against the actual cluster state, and then
-// perform operations to make the cluster state reflect the state specified by
-// the user.
 //
 // For more details, check Reconcile and its Result here:
 // - https://pkg.go.dev/sigs.k8s.io/controller-runtime@v0.19.4/pkg/reconcile
@@ -94,8 +90,7 @@ func (r *JobDeploymentReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		l.Error(err, "could not get child")
 		return ctrl.Result{}, err
 	}
-	return r.deleteChildIfSpecDiffers(ctx, parent, child)
-	// TODO: sync status
+	return r.updateChild(ctx, parent, child)
 }
 
 func (r *JobDeploymentReconciler) createChild(ctx context.Context, parent *apiv1alpha1.JobDeployment, child *batchv1.Job) (ctrl.Result, error) {
@@ -108,25 +103,28 @@ func (r *JobDeploymentReconciler) createChild(ctx context.Context, parent *apiv1
 		}
 	}()
 
+	// basic fields
 	child.Name = parent.Name
 	child.Namespace = parent.Namespace
 	child.Spec = parent.Spec.JobSpec
 
+	// controller owner ref
 	if err := controllerutil.SetControllerReference(parent, child, r.Scheme); err != nil {
 		l.Error(err, "could not set owner refs")
 		return ctrl.Result{}, err
 	}
 
+	// job spec hash
 	parentSpecHash, err := hashJobSpec(parent.Spec.JobSpec)
 	if err != nil {
 		l.Error(err, "could not hash parent's job spec")
 		return ctrl.Result{}, err
 	}
-
 	child.Annotations = map[string]string{
 		hashAnnotation: parentSpecHash,
 	}
 
+	// create
 	if err := r.Create(ctx, child, &client.CreateOptions{
 		FieldManager: fieldManager,
 	}); err != nil {
@@ -151,13 +149,15 @@ func isController(parent *apiv1alpha1.JobDeployment, child *batchv1.Job) bool {
 	return false
 }
 
-func (r *JobDeploymentReconciler) deleteChildIfSpecDiffers(ctx context.Context, parent *apiv1alpha1.JobDeployment, child *batchv1.Job) (ctrl.Result, error) {
+func (r *JobDeploymentReconciler) updateChild(ctx context.Context, parent *apiv1alpha1.JobDeployment, child *batchv1.Job) (ctrl.Result, error) {
 	l := log.FromContext(ctx)
 
+	// don't mess with children we don't actually own
 	if !isController(parent, child) {
 		return ctrl.Result{}, fmt.Errorf("we don't own job '%s' in namespace '%s'", child.Name, child.Namespace)
 	}
 
+	// check if hash differs
 	expectedHash, err := hashJobSpec(parent.Spec.JobSpec)
 	if err != nil {
 		l.Error(err, "could not hash parent's job spec")
@@ -169,8 +169,9 @@ func (r *JobDeploymentReconciler) deleteChildIfSpecDiffers(ctx context.Context, 
 		l.Info("hash annotation differs", "expected", expectedHash, "actual", actualHash)
 		return r.deleteChild(ctx, parent, child)
 	}
-
 	l.Info("child is up to date")
+
+	// apply status
 	if err := r.applyParentStatus(ctx, parent, status.OK, child.Status); err != nil {
 		l.Error(err, "could not update parent status")
 		return ctrl.Result{}, err
@@ -180,6 +181,7 @@ func (r *JobDeploymentReconciler) deleteChildIfSpecDiffers(ctx context.Context, 
 
 func (r *JobDeploymentReconciler) deleteChild(ctx context.Context, parent *apiv1alpha1.JobDeployment, child *batchv1.Job) (ctrl.Result, error) {
 	l := log.FromContext(ctx)
+	l.Info("child spec differs -- deleting child")
 
 	defer func() {
 		if err := r.applyParentStatus(ctx, parent, status.CreatingChild, child.Status); err != nil {
@@ -187,11 +189,13 @@ func (r *JobDeploymentReconciler) deleteChild(ctx context.Context, parent *apiv1
 		}
 	}()
 
-	l.Info("child spec differs -- deleting child")
+	// already deleting? just come back later
 	if child.GetDeletionTimestamp() != nil {
 		l.Info("still deleting child")
 		return ctrl.Result{RequeueAfter: 1 * time.Second}, nil
 	}
+
+	// delete
 	deletePolicy := metav1.DeletePropagationForeground
 	if err := r.Delete(ctx, child, &client.DeleteOptions{PropagationPolicy: &deletePolicy}); err != nil {
 		l.Error(err, "could not delete child")
