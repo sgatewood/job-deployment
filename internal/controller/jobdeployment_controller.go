@@ -18,13 +18,14 @@ package controller
 
 import (
 	"context"
-
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	apiv1alpha1 "github.com/sgatewood/job-deployment/api/v1alpha1"
+	batchv1 "k8s.io/api/batch/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 )
 
 // JobDeploymentReconciler reconciles a JobDeployment object
@@ -58,7 +59,20 @@ func (r *JobDeploymentReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 
-	l.Info("spec", jobDeployment.Spec)
+	l = l.WithValues("name", jobDeployment.Name, "namespace", jobDeployment.Namespace)
+
+	job := &batchv1.Job{}
+	err := r.Get(ctx, req.NamespacedName, job)
+
+	if client.IgnoreNotFound(err) != nil {
+		return ctrl.Result{}, err
+	}
+
+	if apierrors.IsNotFound(err) {
+		l.Info("need to create child job")
+	} else {
+		l.Info("child job exists")
+	}
 
 	return ctrl.Result{}, nil
 }
