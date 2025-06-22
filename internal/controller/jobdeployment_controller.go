@@ -69,7 +69,14 @@ func (r *JobDeploymentReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 	}
 
 	if apierrors.IsNotFound(err) {
-		l.Info("need to create child job")
+		l.Info("creating child job")
+		job.Name = jobDeployment.Name
+		job.Namespace = jobDeployment.Namespace
+		job.Spec = jobDeployment.Spec.JobSpec
+		if err := r.Create(ctx, job); err != nil {
+			return ctrl.Result{}, err
+		}
+		l.Info("created child job")
 	} else {
 		l.Info("child job exists")
 	}
