@@ -9,7 +9,7 @@ This controller utilizes kubebuilder to do that
 
 ```mermaid
 flowchart TD
-    Deployment -- manages --> Pod
+    Deployment -- manages (through ReplicaSets) --> Pod
     JobDeployment -- manages --> Job
 ```
 
