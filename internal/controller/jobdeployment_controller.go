@@ -18,13 +18,14 @@ package controller
 
 import (
 	"context"
-	"github.com/google/go-cmp/cmp"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"github.com/sgatewood/job-deployment/internal/controller/status"
 	"time"
 
 	apiv1alpha1 "github.com/sgatewood/job-deployment/api/v1alpha1"
 	batchv1 "k8s.io/api/batch/v1"
-	"k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -35,6 +36,18 @@ import (
 )
 
 const fieldManager = "sgatewood.dev/jobdeployment-controller"
+const hashAnnotation = "job-spec-hash"
+
+// hashJobSpec creates a SHA256 hash of the JobSpec
+func hashJobSpec(spec batchv1.JobSpec) (string, error) {
+	b, err := json.Marshal(spec)
+	if err != nil {
+		return "", err
+	}
+
+	hash := sha256.Sum256(b)
+	return hex.EncodeToString(hash[:]), nil
+}
 
 // JobDeploymentReconciler reconciles a JobDeployment object
 type JobDeploymentReconciler struct {
@@ -68,7 +81,7 @@ func (r *JobDeploymentReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 			return ctrl.Result{}, nil
 		}
 		l.Error(err, "could not get parent")
-		return ctrl.Result{Requeue: true}, err
+		return ctrl.Result{}, err
 	}
 	l = l.WithValues("name", req.Name, "namespace", req.Namespace)
 
@@ -78,7 +91,7 @@ func (r *JobDeploymentReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 			return r.createChild(ctx, parent, child)
 		}
 		l.Error(err, "could not get child")
-		return ctrl.Result{Requeue: true}, err
+		return ctrl.Result{}, err
 	}
 	return r.deleteChildIfSpecDiffers(ctx, parent, child)
 	// TODO: sync status
@@ -100,14 +113,24 @@ func (r *JobDeploymentReconciler) createChild(ctx context.Context, parent *apiv1
 
 	if err := controllerutil.SetOwnerReference(parent, child, r.Scheme); err != nil {
 		l.Error(err, "could not set owner refs")
-		return ctrl.Result{Requeue: true}, err
+		return ctrl.Result{}, err
+	}
+
+	parentSpecHash, err := hashJobSpec(parent.Spec.JobSpec)
+	if err != nil {
+		l.Error(err, "could not hash parent's job spec")
+		return ctrl.Result{}, err
+	}
+
+	child.Annotations = map[string]string{
+		hashAnnotation: parentSpecHash,
 	}
 
 	if err := r.Create(ctx, child, &client.CreateOptions{
 		FieldManager: fieldManager,
 	}); err != nil {
 		l.Error(err, "could not create child")
-		return ctrl.Result{Requeue: true}, err
+		return ctrl.Result{}, err
 	}
 
 	l.Info("created child")
@@ -119,16 +142,22 @@ func (r *JobDeploymentReconciler) deleteChildIfSpecDiffers(ctx context.Context, 
 
 	// TODO: if we don't own the child, just error out
 
-	if !equality.Semantic.DeepEqual(parent.Spec.JobSpec, child.Spec) {
-		diff := cmp.Diff(parent.Spec.JobSpec, child.Spec)
-		l.Info("diff found", "diff", diff)
+	expectedHash, err := hashJobSpec(parent.Spec.JobSpec)
+	if err != nil {
+		l.Error(err, "could not hash parent's job spec")
+		return ctrl.Result{}, err
+	}
+
+	actualHash, found := child.Annotations[hashAnnotation]
+	if !found || expectedHash != actualHash {
+		l.Info("hash annotation differs", "expected", expectedHash, "actual", actualHash)
 		return r.deleteChild(ctx, parent, child)
 	}
 
 	l.Info("child is up to date")
 	if err := r.applyParentStatus(ctx, parent, status.OK, child.Status); err != nil {
 		l.Error(err, "could not update parent status")
-		return ctrl.Result{Requeue: true}, err
+		return ctrl.Result{}, err
 	}
 	return ctrl.Result{}, nil
 }
@@ -150,7 +179,7 @@ func (r *JobDeploymentReconciler) deleteChild(ctx context.Context, parent *apiv1
 	deletePolicy := metav1.DeletePropagationForeground
 	if err := r.Delete(ctx, child, &client.DeleteOptions{PropagationPolicy: &deletePolicy}); err != nil {
 		l.Error(err, "could not delete child")
-		return ctrl.Result{Requeue: true}, err
+		return ctrl.Result{}, err
 	}
 	return ctrl.Result{RequeueAfter: 1 * time.Second}, nil
 }
