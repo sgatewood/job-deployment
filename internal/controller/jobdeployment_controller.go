@@ -18,9 +18,9 @@ package controller
 
 import (
 	"context"
-	"github.com/google/go-cmp/cmp"
 	apiv1alpha1 "github.com/sgatewood/job-deployment/api/v1alpha1"
 	batchv1 "k8s.io/api/batch/v1"
+	"k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -103,7 +103,7 @@ func (r *JobDeploymentReconciler) createChild(ctx context.Context, parent *apiv1
 func (r *JobDeploymentReconciler) deleteChildIfSpecDiffers(ctx context.Context, parent *apiv1alpha1.JobDeployment, child *batchv1.Job) (ctrl.Result, error) {
 	l := log.FromContext(ctx)
 
-	if diff := cmp.Diff(parent.Spec.JobSpec, child.Spec); diff != "" {
+	if !equality.Semantic.DeepEqual(parent.Spec.JobSpec, child.Spec) {
 		return r.deleteChild(ctx, child)
 	}
 
