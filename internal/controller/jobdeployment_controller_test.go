@@ -22,9 +22,9 @@ import (
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
 	apiv1alpha1 "github.com/sgatewood/job-deployment/api/v1alpha1"
+	batchv1 "k8s.io/api/batch/v1"
 	v1 "k8s.io/api/batch/v1"
 	corev1 "k8s.io/api/core/v1"
-	"k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
@@ -36,49 +36,51 @@ var _ = Describe("JobDeployment Controller", func() {
 
 		ctx := context.Background()
 
-		typeNamespacedName := types.NamespacedName{
-			Name:      resourceName,
-			Namespace: "default", // TODO(user):Modify as needed
+		ns := &corev1.Namespace{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "test-ns",
+			},
 		}
-		jobdeployment := &apiv1alpha1.JobDeployment{}
-
-		BeforeEach(func() {
-			By("creating the custom resource for the Kind JobDeployment")
-			err := k8sClient.Get(ctx, typeNamespacedName, jobdeployment)
-			if err != nil && errors.IsNotFound(err) {
-				resource := &apiv1alpha1.JobDeployment{
-					ObjectMeta: metav1.ObjectMeta{
-						Name:      resourceName,
-						Namespace: "default",
-					},
-					Spec: apiv1alpha1.JobDeploymentSpec{
-						JobSpec: v1.JobSpec{
-							Template: corev1.PodTemplateSpec{
-								Spec: corev1.PodSpec{
-									RestartPolicy: "Never",
-									Containers: []corev1.Container{
-										{
-											Name:  "hello",
-											Image: "busybox",
-											Command: []string{
-												"echo",
-												"Hello world",
-											},
-										},
+		namespacedName := types.NamespacedName{
+			Name:      resourceName,
+			Namespace: ns.Name,
+		}
+		parent := &apiv1alpha1.JobDeployment{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      resourceName,
+				Namespace: namespacedName.Namespace,
+			},
+			Spec: apiv1alpha1.JobDeploymentSpec{
+				JobSpec: v1.JobSpec{
+					Template: corev1.PodTemplateSpec{
+						Spec: corev1.PodSpec{
+							RestartPolicy: "Never",
+							Containers: []corev1.Container{
+								{
+									Name:  "hello",
+									Image: "busybox",
+									Command: []string{
+										"echo",
+										"Hello world",
 									},
 								},
 							},
 						},
 					},
-				}
-				Expect(k8sClient.Create(ctx, resource)).To(Succeed())
-			}
+				},
+			},
+		}
+
+		BeforeEach(func() {
+			By("creating the custom resource for the Kind JobDeployment")
+			Expect(k8sClient.Create(ctx, ns)).To(Succeed())
+			Expect(k8sClient.Create(ctx, parent)).To(Succeed())
 		})
 
 		AfterEach(func() {
 			// TODO(user): Cleanup logic after each test, like removing the resource instance.
 			resource := &apiv1alpha1.JobDeployment{}
-			err := k8sClient.Get(ctx, typeNamespacedName, resource)
+			err := k8sClient.Get(ctx, namespacedName, resource)
 			Expect(err).NotTo(HaveOccurred())
 
 			By("Cleanup the specific resource instance JobDeployment")
@@ -92,11 +94,21 @@ var _ = Describe("JobDeployment Controller", func() {
 			}
 
 			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
-				NamespacedName: typeNamespacedName,
+				NamespacedName: namespacedName,
 			})
 			Expect(err).NotTo(HaveOccurred())
-			// TODO(user): Add more specific assertions depending on your controller's reconciliation logic.
-			// Example: If you expect a certain status condition after reconciliation, verify it here.
+
+			child := &batchv1.Job{}
+			Expect(k8sClient.Get(ctx, namespacedName, child)).To(Succeed())
+
+			Expect(child.Spec.Template.Spec.RestartPolicy).To(Equal(parent.Spec.JobSpec.Template.Spec.RestartPolicy))
+
+			containers := child.Spec.Template.Spec.Containers
+			Expect(containers).To(HaveLen(1))
+			container := containers[0]
+			Expect(container.Name).To(Equal(parent.Spec.JobSpec.Template.Spec.Containers[0].Name))
+			Expect(container.Image).To(Equal(parent.Spec.JobSpec.Template.Spec.Containers[0].Image))
+			Expect(container.Command).To(Equal(parent.Spec.JobSpec.Template.Spec.Containers[0].Command))
 		})
 	})
 })
