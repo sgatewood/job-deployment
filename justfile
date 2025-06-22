@@ -1,3 +1,6 @@
+help:
+  just -l
+
 cluster-up:
     k3d cluster create sean --agents 2
 
@@ -7,6 +10,7 @@ cluster-down:
 cluster-reset:
     just cluster-down
     just cluster-up
+    just connect
 
 connect:
     k3d kubeconfig get sean > .kubeconfig
