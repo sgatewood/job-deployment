@@ -5,5 +5,6 @@ pkgs.mkShell {
     go
     just
     k3d
+    kubebuilder
   ];
 }
