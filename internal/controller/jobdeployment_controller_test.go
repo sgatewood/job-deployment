@@ -18,6 +18,7 @@ package controller
 
 import (
 	"context"
+	"k8s.io/api/batch/v1"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -25,9 +26,9 @@ import (
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-
 	apiv1alpha1 "github.com/sgatewood/job-deployment/api/v1alpha1"
+	corev1 "k8s.io/api/core/v1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 var _ = Describe("JobDeployment Controller", func() {
@@ -51,7 +52,25 @@ var _ = Describe("JobDeployment Controller", func() {
 						Name:      resourceName,
 						Namespace: "default",
 					},
-					// TODO(user): Specify other spec details if needed.
+					Spec: apiv1alpha1.JobDeploymentSpec{
+						JobSpec: v1.JobSpec{
+							Template: corev1.PodTemplateSpec{
+								Spec: corev1.PodSpec{
+									RestartPolicy: "Never",
+									Containers: []corev1.Container{
+										{
+											Name:  "hello",
+											Image: "busybox",
+											Command: []string{
+												"echo",
+												"Hello world",
+											},
+										},
+									},
+								},
+							},
+						},
+					},
 				}
 				Expect(k8sClient.Create(ctx, resource)).To(Succeed())
 			}
