@@ -4,6 +4,7 @@ pkgs.mkShell {
     fzf
     go
     golangci-lint
+    gotools
     just
     k3d
     kubebuilder

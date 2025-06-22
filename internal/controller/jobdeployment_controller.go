@@ -18,6 +18,8 @@ package controller
 
 import (
 	"context"
+	"time"
+
 	apiv1alpha1 "github.com/sgatewood/job-deployment/api/v1alpha1"
 	batchv1 "k8s.io/api/batch/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
@@ -28,7 +30,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/log"
-	"time"
 )
 
 // JobDeploymentReconciler reconciles a JobDeployment object
