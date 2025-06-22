@@ -21,6 +21,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"fmt"
 	"github.com/sgatewood/job-deployment/internal/controller/status"
 	"time"
 
@@ -111,7 +112,7 @@ func (r *JobDeploymentReconciler) createChild(ctx context.Context, parent *apiv1
 	child.Namespace = parent.Namespace
 	child.Spec = parent.Spec.JobSpec
 
-	if err := controllerutil.SetOwnerReference(parent, child, r.Scheme); err != nil {
+	if err := controllerutil.SetControllerReference(parent, child, r.Scheme); err != nil {
 		l.Error(err, "could not set owner refs")
 		return ctrl.Result{}, err
 	}
@@ -137,10 +138,25 @@ func (r *JobDeploymentReconciler) createChild(ctx context.Context, parent *apiv1
 	return ctrl.Result{Requeue: true}, nil
 }
 
+func isController(parent *apiv1alpha1.JobDeployment, child *batchv1.Job) bool {
+	for _, ref := range child.OwnerReferences {
+		if (ref.Controller != nil && *ref.Controller) &&
+			ref.APIVersion == parent.APIVersion &&
+			ref.Kind == parent.Kind &&
+			ref.Name == parent.Name &&
+			ref.UID == parent.UID {
+			return true
+		}
+	}
+	return false
+}
+
 func (r *JobDeploymentReconciler) deleteChildIfSpecDiffers(ctx context.Context, parent *apiv1alpha1.JobDeployment, child *batchv1.Job) (ctrl.Result, error) {
 	l := log.FromContext(ctx)
 
-	// TODO: if we don't own the child, just error out
+	if !isController(parent, child) {
+		return ctrl.Result{}, fmt.Errorf("we don't own job '%s' in namespace '%s'", child.Name, child.Namespace)
+	}
 
 	expectedHash, err := hashJobSpec(parent.Spec.JobSpec)
 	if err != nil {
