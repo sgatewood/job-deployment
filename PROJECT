@@ -7,4 +7,14 @@ layout:
 - go.kubebuilder.io/v4
 projectName: empty
 repo: github.com/sgatewood/job-deployment
+resources:
+- api:
+    crdVersion: v1
+    namespaced: true
+  controller: true
+  domain: sgatewood.dev
+  group: api
+  kind: JobDeployment
+  path: github.com/sgatewood/job-deployment/api/v1alpha1
+  version: v1alpha1
 version: "3"

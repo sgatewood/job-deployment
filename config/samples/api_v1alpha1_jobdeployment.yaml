@@ -1,0 +1,16 @@
+apiVersion: api.sgatewood.dev/v1alpha1
+kind: JobDeployment
+metadata:
+  labels:
+    app.kubernetes.io/name: empty
+    app.kubernetes.io/managed-by: kustomize
+  name: jobdeployment-sample
+spec:
+  template:
+    spec:
+      containers:
+        - name: hello
+          image: busybox
+          command: [ "echo", "Hello, world!" ]
+      restartPolicy: Never
+    backoffLimit: 3
