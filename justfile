@@ -2,15 +2,18 @@ help:
   just -l
 
 cluster-up:
-    k3d cluster create sean --agents 2
+  k3d cluster create sean --agents 2
 
 cluster-down:
-    k3d cluster delete sean
+  k3d cluster delete sean
 
 cluster-reset:
-    just cluster-down
-    just cluster-up
-    just connect
+  just cluster-down
+  just cluster-up
+  just connect
 
 connect:
-    k3d kubeconfig get sean > .kubeconfig
+  k3d kubeconfig get sean > .kubeconfig
+
+create-jobdeployment:
+  kubectl apply --server-side -f "${REPO_ROOT}/config/samples/api_v1alpha1_jobdeployment.yaml"
