@@ -21,6 +21,7 @@ import (
 	"github.com/google/go-cmp/cmp"
 	apiv1alpha1 "github.com/sgatewood/job-deployment/api/v1alpha1"
 	batchv1 "k8s.io/api/batch/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -28,7 +29,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 	"time"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
 )
 
 // JobDeploymentReconciler reconciles a JobDeployment object
@@ -61,54 +61,70 @@ func (r *JobDeploymentReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		if apierrors.IsNotFound(err) {
 			l.Info("parent doesn't exist -- nothing to do")
 			return ctrl.Result{}, nil
-		} else {
-			l.Error(err, "could not get parent")
-			return ctrl.Result{}, err
 		}
+		l.Error(err, "could not get parent")
+		return ctrl.Result{Requeue: true}, err
 	}
 	l = l.WithValues("name", req.Name, "namespace", req.Namespace)
 
 	child := &batchv1.Job{}
-	err := r.Get(ctx, req.NamespacedName, child)
-	if client.IgnoreNotFound(err) != nil {
+	if err := r.Get(ctx, req.NamespacedName, child); err != nil {
+		if apierrors.IsNotFound(err) {
+			return r.createChild(ctx, parent, child)
+		}
 		l.Error(err, "could not get child")
-		return ctrl.Result{}, err
+		return ctrl.Result{Requeue: true}, err
+	}
+	return r.deleteChildIfSpecDiffers(ctx, parent, child)
+}
+
+func (r *JobDeploymentReconciler) createChild(ctx context.Context, parent *apiv1alpha1.JobDeployment, child *batchv1.Job) (ctrl.Result, error) {
+	l := log.FromContext(ctx)
+	l.Info("creating child")
+
+	child.Name = parent.Name
+	child.Namespace = parent.Namespace
+	child.Spec = parent.Spec.JobSpec
+
+	if err := controllerutil.SetOwnerReference(parent, child, r.Scheme); err != nil {
+		l.Error(err, "could not set owner refs")
+		return ctrl.Result{Requeue: true}, err
 	}
 
-	if err != nil && apierrors.IsNotFound(err) {
-		l.Info("creating child")
-		child.Name = parent.Name
-		child.Namespace = parent.Namespace
-		child.Spec = parent.Spec.JobSpec
-		if err := controllerutil.SetOwnerReference(parent, child, r.Scheme); err != nil {
-			l.Error(err, "could not set owner refs")
-			return ctrl.Result{}, err
-		}
-		if err := r.Create(ctx, child); err != nil {
-			l.Error(err, "could not create child")
-			return ctrl.Result{}, err
-		}
-		l.Info("created child")
-		return ctrl.Result{}, nil
+	if err := r.Create(ctx, child); err != nil {
+		l.Error(err, "could not create child")
+		return ctrl.Result{Requeue: true}, err
 	}
+
+	l.Info("created child")
+	return ctrl.Result{}, nil
+}
+
+func (r *JobDeploymentReconciler) deleteChildIfSpecDiffers(ctx context.Context, parent *apiv1alpha1.JobDeployment, child *batchv1.Job) (ctrl.Result, error) {
+	l := log.FromContext(ctx)
 
 	if diff := cmp.Diff(parent.Spec.JobSpec, child.Spec); diff != "" {
-		l.Info("child spec differs -- deleting child")
-		if child.GetDeletionTimestamp() != nil {
-			l.Info("still deleting child")
-			return ctrl.Result{RequeueAfter: 1 * time.Second}, nil
-		}
-		deletePolicy := metav1.DeletePropagationForeground
-		if err := r.Delete(ctx, child, &client.DeleteOptions{PropagationPolicy: &deletePolicy}); err != nil {
-			l.Error(err, "could not delete child")
-			return ctrl.Result{Requeue: true}, err
-		}
-		return ctrl.Result{RequeueAfter: 1 * time.Second}, nil
-	} else {
-		l.Info("child is up to date")
+		return r.deleteChild(ctx, child)
 	}
 
+	l.Info("child is up to date")
 	return ctrl.Result{}, nil
+}
+
+func (r *JobDeploymentReconciler) deleteChild(ctx context.Context, child *batchv1.Job) (ctrl.Result, error) {
+	l := log.FromContext(ctx)
+
+	l.Info("child spec differs -- deleting child")
+	if child.GetDeletionTimestamp() != nil {
+		l.Info("still deleting child")
+		return ctrl.Result{RequeueAfter: 1 * time.Second}, nil
+	}
+	deletePolicy := metav1.DeletePropagationForeground
+	if err := r.Delete(ctx, child, &client.DeleteOptions{PropagationPolicy: &deletePolicy}); err != nil {
+		l.Error(err, "could not delete child")
+		return ctrl.Result{Requeue: true}, err
+	}
+	return ctrl.Result{RequeueAfter: 1 * time.Second}, nil
 }
 
 // SetupWithManager sets up the controller with the Manager.
