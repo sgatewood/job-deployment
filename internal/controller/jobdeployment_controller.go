@@ -212,6 +212,7 @@ func (r *JobDeploymentReconciler) applyParentStatus(ctx context.Context, parent 
 func (r *JobDeploymentReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&apiv1alpha1.JobDeployment{}).
+		Owns(&batchv1.Job{}).
 		Named("jobdeployment").
 		Complete(r)
 }
