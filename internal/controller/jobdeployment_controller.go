@@ -76,6 +76,7 @@ func (r *JobDeploymentReconciler) Reconcile(ctx context.Context, req ctrl.Reques
 		return ctrl.Result{Requeue: true}, err
 	}
 	return r.deleteChildIfSpecDiffers(ctx, parent, child)
+	// TODO: sync status
 }
 
 func (r *JobDeploymentReconciler) createChild(ctx context.Context, parent *apiv1alpha1.JobDeployment, child *batchv1.Job) (ctrl.Result, error) {
@@ -102,6 +103,8 @@ func (r *JobDeploymentReconciler) createChild(ctx context.Context, parent *apiv1
 
 func (r *JobDeploymentReconciler) deleteChildIfSpecDiffers(ctx context.Context, parent *apiv1alpha1.JobDeployment, child *batchv1.Job) (ctrl.Result, error) {
 	l := log.FromContext(ctx)
+
+	// TODO: if we don't own the child, just error out
 
 	if !equality.Semantic.DeepEqual(parent.Spec.JobSpec, child.Spec) {
 		return r.deleteChild(ctx, child)
