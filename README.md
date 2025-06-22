@@ -13,6 +13,9 @@ flowchart TD
     JobDeployment -- manages --> Job
 ```
 
+Most of this repo is generated boilerplate -- most relevant file
+is [here](internal/controller/jobdeployment_controller.go)
+
 ## Getting Started
 
 ### Prerequisites
