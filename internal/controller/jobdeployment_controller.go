@@ -18,6 +18,8 @@ package controller
 
 import (
 	"context"
+	"github.com/google/go-cmp/cmp"
+	"github.com/sgatewood/job-deployment/internal/controller/status"
 	"time"
 
 	apiv1alpha1 "github.com/sgatewood/job-deployment/api/v1alpha1"
@@ -84,6 +86,12 @@ func (r *JobDeploymentReconciler) createChild(ctx context.Context, parent *apiv1
 	l := log.FromContext(ctx)
 	l.Info("creating child")
 
+	defer func() {
+		if err := r.applyParentStatus(ctx, parent, status.CreatingChild, batchv1.JobStatus{}); err != nil {
+			l.Error(err, "could not apply parent status")
+		}
+	}()
+
 	child.Name = parent.Name
 	child.Namespace = parent.Namespace
 	child.Spec = parent.Spec.JobSpec
@@ -99,7 +107,7 @@ func (r *JobDeploymentReconciler) createChild(ctx context.Context, parent *apiv1
 	}
 
 	l.Info("created child")
-	return ctrl.Result{}, nil
+	return ctrl.Result{Requeue: true}, nil
 }
 
 func (r *JobDeploymentReconciler) deleteChildIfSpecDiffers(ctx context.Context, parent *apiv1alpha1.JobDeployment, child *batchv1.Job) (ctrl.Result, error) {
@@ -108,15 +116,27 @@ func (r *JobDeploymentReconciler) deleteChildIfSpecDiffers(ctx context.Context, 
 	// TODO: if we don't own the child, just error out
 
 	if !equality.Semantic.DeepEqual(parent.Spec.JobSpec, child.Spec) {
-		return r.deleteChild(ctx, child)
+		diff := cmp.Diff(parent.Spec.JobSpec, child.Spec)
+		l.Info("diff found", "diff", diff)
+		return r.deleteChild(ctx, parent, child)
 	}
 
 	l.Info("child is up to date")
+	if err := r.applyParentStatus(ctx, parent, status.OK, child.Status); err != nil {
+		l.Error(err, "could not update parent status")
+		return ctrl.Result{Requeue: true}, err
+	}
 	return ctrl.Result{}, nil
 }
 
-func (r *JobDeploymentReconciler) deleteChild(ctx context.Context, child *batchv1.Job) (ctrl.Result, error) {
+func (r *JobDeploymentReconciler) deleteChild(ctx context.Context, parent *apiv1alpha1.JobDeployment, child *batchv1.Job) (ctrl.Result, error) {
 	l := log.FromContext(ctx)
+
+	defer func() {
+		if err := r.applyParentStatus(ctx, parent, status.CreatingChild, child.Status); err != nil {
+			l.Error(err, "could not apply parent status")
+		}
+	}()
 
 	l.Info("child spec differs -- deleting child")
 	if child.GetDeletionTimestamp() != nil {
@@ -129,6 +149,14 @@ func (r *JobDeploymentReconciler) deleteChild(ctx context.Context, child *batchv
 		return ctrl.Result{Requeue: true}, err
 	}
 	return ctrl.Result{RequeueAfter: 1 * time.Second}, nil
+}
+
+func (r *JobDeploymentReconciler) applyParentStatus(ctx context.Context, parent *apiv1alpha1.JobDeployment, status status.JobDeploymentStatus, jobStatus batchv1.JobStatus) error {
+	parent.Status = apiv1alpha1.JobDeploymentStatus{
+		JobStatus: jobStatus,
+		Status:    string(status),
+	}
+	return r.Status().Update(ctx, parent)
 }
 
 // SetupWithManager sets up the controller with the Manager.
