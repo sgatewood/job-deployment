@@ -34,6 +34,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
+const fieldManager = "sgatewood.dev/jobdeployment-controller"
+
 // JobDeploymentReconciler reconciles a JobDeployment object
 type JobDeploymentReconciler struct {
 	client.Client
@@ -101,7 +103,9 @@ func (r *JobDeploymentReconciler) createChild(ctx context.Context, parent *apiv1
 		return ctrl.Result{Requeue: true}, err
 	}
 
-	if err := r.Create(ctx, child); err != nil {
+	if err := r.Create(ctx, child, &client.CreateOptions{
+		FieldManager: fieldManager,
+	}); err != nil {
 		l.Error(err, "could not create child")
 		return ctrl.Result{Requeue: true}, err
 	}
